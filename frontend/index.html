@@ -42,6 +42,13 @@
   .tabs button.sel{background:var(--brand);color:#fff}
   .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .25s;z-index:20}
   .toast.show{opacity:1}
+  .chips.rooms{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px}
+  .chips.rooms button{padding:9px 0;border-radius:8px}
+  .lockBar{display:flex;align-items:center;gap:8px;background:#e7f4ec;border:1.5px solid var(--ok);border-radius:10px;padding:9px 12px;margin-top:10px;font-size:14px}
+  .lockBar b{flex:1}
+  .lockBar button{border:0;background:transparent;color:var(--brand);font-weight:600;font-size:14px;padding:4px}
+  .lockChk{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:14px}
+  .lockChk input{flex:none;width:20px;height:20px}
   .hidden{display:none}
 </style>
 </head>
@@ -75,6 +82,8 @@
       <div class="startCam" id="startCam"><button onclick="startCam()">📷 Start scanning</button></div>
     </div>
 
+    <div id="lockBar" class="hidden"></div>
+
     <div class="row">
       <input id="manual" placeholder="Type an asset number" autocapitalize="characters">
       <button class="btn ghost" onclick="lookup(document.getElementById('manual').value, '')">Find</button>
@@ -107,7 +116,8 @@ const LSset = (k,v) => { try { localStorage.setItem('ahgScan_'+k, v); } catch(e)
 
 let cfg = { api: LS('api'), token: LS('token'), name: LS('name') };
 let settings = {}, rows = [], staff = [];
-let filter = 'todo', group = 'All', current = null, chosenLoc = '';
+let filter = 'todo', group = 'All', current = null, chosenLoc = '', pickArea = '';
+let lockedLoc = LS('lockedLoc');                   // "remember the location" mode (kept on this phone)
 let stream = null, detector = null, scanning = false, paused = false, lastCode = '', lastAt = 0, torchOn = false;
 
 // Setup link: index.html#api=...&t=...&n=...
@@ -123,7 +133,9 @@ let stream = null, detector = null, scanning = false, paused = false, lastCode =
 // ===== Settings (blank cell in the Settings tab → default) =====
 const DEFAULTS = {
   'Title': 'AHG Asset Scanner',
-  'Locations': 'On unit, Store, CN Backup store, NM store, With Biomed, In ASH, Other',
+  'Locations': 'Room, Main station (CN), Back up store, Equipment store, With Biomed, In ASH, Other',
+  'Room Area': 'Room',
+  'Rooms': '4001-4026',
   'Match Columns': 'Asset Number, Old Asset ID',
   'Card Columns': 'Product Category, Status, Comment, Handwritten Note',
   'Group Column': 'Product Category',
@@ -223,50 +235,122 @@ function render(){
 }
 
 // ===== Lookup + save =====
+let lastSaved = '';                                // locked mode: holding the camera on one QR saves it once
 function lookup(text, raw){
   const code = extractCode(text);
   if (!code) return;
   const key = norm(code), mc = list(S('Match Columns'));
   const r = rows.find(x => mc.some(c => norm(x[c]) === key));
+  if (lockedLoc && key === lastSaved) return;
   current = { code, raw: raw || text, row: r || null };
+
+  if (lockedLoc){                                  // remember-location mode: save straight away
+    chosenLoc = lockedLoc; lastSaved = key;
+    pushSave(); showSaved(); render(); flush();
+    return;
+  }
   paused = true;                                   // hold the camera on this result until Save/Cancel
   chosenLoc = (r && r['Location']) || '';
-  const box = $('result'); box.classList.remove('hidden');
+  area = areaOf(chosenLoc);
+  renderAsk();
+}
 
-  if (!r){
-    box.innerHTML = `<span class="pill warn">Not on the list</span>
-      <div class="big" style="margin-top:6px">${esc(code)}</div>
-      <div class="muted">QR text: ${esc(current.raw.slice(0,120))}</div>
-      <div class="muted" style="margin-top:8px">Where is it?</div>${chipsHtml()}
-      <div class="row"><button class="btn" onclick="save()">Log scan</button>
-      <button class="btn ghost" onclick="closeResult()">Cancel</button></div>`;
-  } else {
-    const details = list(S('Card Columns')).filter(c => r[c])
-      .map(c => `<div class="muted"><b>${esc(c)}:</b> ${esc(r[c])}</div>`).join('');
-    box.innerHTML = `<span class="pill ${isFound(r)?'ok':'miss'}">${isFound(r)?'Already found':'Not found yet'}</span>
-      <div class="big" style="margin-top:6px">${esc(r[mc[0]])} <span class="muted">${esc(mc.slice(1).map(c=>r[c]).filter(Boolean).join(' · '))}</span></div>
-      ${details}
-      <div class="muted" style="margin-top:8px">Where is it?</div>${chipsHtml()}
-      <div class="row"><button class="btn ok" onclick="save()">✔ Mark found</button>
-      <button class="btn ghost" onclick="closeResult()">Cancel</button></div>`;
-  }
+function headHtml(pill){
+  const r = current.row, mc = list(S('Match Columns'));
+  if (!r) return `${pill || '<span class="pill warn">Not on the list</span>'}
+    <div class="big" style="margin-top:6px">${esc(current.code)}</div>
+    <div class="muted">QR text: ${esc(current.raw.slice(0,120))}</div>`;
+  const details = list(S('Card Columns')).filter(c => r[c])
+    .map(c => `<div class="muted"><b>${esc(c)}:</b> ${esc(r[c])}</div>`).join('');
+  return `${pill || `<span class="pill ${isFound(r)?'ok':'miss'}">${isFound(r)?'Already found':'Not found yet'}</span>`}
+    <div class="big" style="margin-top:6px">${esc(r[mc[0]])} <span class="muted">${esc(mc.slice(1).map(c=>r[c]).filter(Boolean).join(' · '))}</span></div>
+    ${details}`;
+}
+function renderAsk(fix){
+  const box = $('result'); box.classList.remove('hidden');
+  box.innerHTML = `${headHtml()}
+    <div class="muted" style="margin-top:8px">Where is it?</div><div id="locPick">${pickerHtml()}</div>
+    ${fix ? '' : `<label class="lockChk"><input type="checkbox" id="lockChk" ${lockedLoc?'checked':''}> 🔒 Keep this location for the next scans</label>`}
+    <div class="row"><button class="btn ${current.row?'ok':''}" onclick="save()">${current.row?'✔ Mark found':'Log scan'}</button>
+    <button class="btn ghost" onclick="closeResult()">Cancel</button></div>`;
   box.scrollIntoView({behavior:'smooth', block:'center'});
 }
-const DEFAULT_LOCATIONS = 'On unit, Store, CN Backup store, NM store, With Biomed, In ASH, Other';
+// Locked mode: already saved — show it, keep the camera running
+function showSaved(){
+  const box = $('result'); box.classList.remove('hidden');
+  const pill = current.row
+    ? `<span class="pill ok">✔ Saved to ${esc(chosenLoc)}</span>`
+    : `<span class="pill warn">Not on the list · logged to ${esc(chosenLoc)}</span>`;
+  box.innerHTML = `${headHtml(pill)}
+    <div class="row"><button class="btn ghost" onclick="fixLoc()">Wrong location?</button></div>`;
+}
+function fixLoc(){
+  if (!current) return;
+  paused = true; area = areaOf(chosenLoc); renderAsk(true);   // fixes this item only; the lock stays
+}
+
+// ----- Location picker: areas, plus a room grid under the Room area -----
+let area = '';
+const DEFAULT_LOCATIONS = 'Room, Main station (CN), Back up store, Equipment store, With Biomed, In ASH, Other';
 function locations(){
   const l = list(S('Locations'));
   return l.length ? l : list(DEFAULT_LOCATIONS);   // blank Settings cell → use defaults
 }
-function chipsHtml(){
-  return `<div class="chips">${locations().map(l =>
-    `<button class="${l===chosenLoc?'sel':''}" data-l="${esc(l)}" onclick="pickLoc(this)">${esc(l)}</button>`).join('')}</div>`;
+function rooms(){
+  return list(S('Rooms')).flatMap(p => {
+    const m = p.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (!m) return [p];
+    const a = +m[1], b = +m[2], out = [];
+    for (let n = a; n <= b && out.length < 500; n++) out.push(String(n));
+    return out;
+  });
 }
-function pickLoc(btn){
-  let loc = btn.dataset.l;
-  if (loc === 'Other'){ const v = prompt('Location?'); if (!v) return; loc = v; }
-  chosenLoc = loc;
-  btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('sel'));
-  btn.classList.add('sel');
+function areaOf(loc){
+  const ra = S('Room Area');
+  if (!loc) return '';
+  if (ra && loc.startsWith(ra + ' ')) return ra;
+  return locations().includes(loc) ? loc : 'Other';
+}
+function pickerHtml(){
+  const ra = S('Room Area');
+  let h = `<div class="chips">${locations().map(l =>
+    `<button class="${l===area?'sel':''}" data-l="${esc(l)}" onclick="chooseArea(this.dataset.l)">${esc(l)}${l==='Other' && area==='Other' && chosenLoc ? ': ' + esc(chosenLoc) : ''}</button>`).join('')}</div>`;
+  if (area && area === ra){
+    h += `<div class="chips rooms">${rooms().map(n =>
+      `<button class="${chosenLoc===ra+' '+n?'sel':''}" data-n="${esc(n)}" onclick="chooseRoom(this.dataset.n)">${esc(n)}</button>`).join('')}</div>`;
+  }
+  return h;
+}
+function chooseArea(a){
+  if (a === 'Other'){ const v = prompt('Location?'); if (!v) return; chosenLoc = v.trim(); }
+  else if (a === S('Room Area')) chosenLoc = '';   // pick the room next
+  else chosenLoc = a;
+  area = a; $('locPick').innerHTML = pickerHtml();
+}
+function chooseRoom(n){ chosenLoc = S('Room Area') + ' ' + n; $('locPick').innerHTML = pickerHtml(); }
+
+// ----- Lock bar -----
+function setLock(loc){ lockedLoc = loc; lastSaved = ''; LSset('lockedLoc', loc); renderLock(); }
+function renderLock(){
+  const b = $('lockBar'); b.classList.remove('hidden');
+  b.innerHTML = lockedLoc
+    ? `<div class="lockBar">🔒 <b>Saving to ${esc(lockedLoc)}</b>
+         <button onclick="changeLock()">Change</button><button onclick="setLock('')">Stop</button></div>`
+    : `<div class="row"><button class="btn ghost" style="flex:1" onclick="changeLock()">🔒 Lock a location for all scans</button></div>`;
+}
+function changeLock(){
+  current = null; paused = true;
+  chosenLoc = lockedLoc; area = areaOf(chosenLoc);
+  const box = $('result'); box.classList.remove('hidden');
+  box.innerHTML = `<div class="big">Location for the next scans</div>
+    <div id="locPick">${pickerHtml()}</div>
+    <div class="row"><button class="btn ok" onclick="useLock()">🔒 Use this location</button>
+    <button class="btn ghost" onclick="closeResult()">Cancel</button></div>`;
+  box.scrollIntoView({behavior:'smooth', block:'center'});
+}
+function useLock(){
+  if (!chosenLoc) return toast(area ? 'Pick a room' : 'Pick a location');
+  setLock(chosenLoc); toast('🔒 ' + chosenLoc); closeResult();
 }
 function closeResult(){
   $('result').classList.add('hidden'); current = null;
@@ -298,14 +382,20 @@ async function flush(){
 }
 window.addEventListener('online', flush);
 
-function save(){
-  if (!current) return;
-  if (!chosenLoc) return toast('Pick a location');
+function pushSave(){
   queue.push({ token: cfg.token, asset: current.row ? idOf(current.row) : current.code, row: current.row ? current.row._row : null,
                raw: current.raw, location: chosenLoc, by: cfg.name });
   storeQueue();
   if (current.row){ current.row['Found']='Yes'; current.row['Location']=chosenLoc; }
-  toast(current.row ? '✔ Saved' : 'Logged — not on the list');
+}
+function save(){
+  if (!current) return;
+  if (!chosenLoc) return toast(area ? 'Pick a room' : 'Pick a location');
+  pushSave();
+  const chk = $('lockChk');
+  if (chk) setLock(chk.checked ? chosenLoc : '');
+  lastSaved = norm(current.code);
+  toast(current.row ? '✔ Saved — ' + chosenLoc : 'Logged — not on the list');
   closeResult(); render(); flush();
 }
 
@@ -399,7 +489,7 @@ async function tick(id){
 function init(){
   if (!cfg.api || !cfg.token) return showSetup();
   $('setup').classList.add('hidden'); $('scanner').classList.remove('hidden');
-  loadData();
+  renderLock(); loadData();
 }
 init(); flush();
 </script>

@@ -19,6 +19,7 @@ deployment to the new version (same `/exec` URL). Re-run it by hand from the Act
 - **Settings** – Key / Value. Controls the app; edit here, no code change:
   - `Title`, `Locations` (comma list), `Match Columns` (columns the QR is matched against),
   - `Card Columns` (shown after a scan), `Group Column` (filter chips), `Code Pattern` (regex that pulls the code out of the QR text).
+  - `Room Area` (the location button that opens the room grid, default `Room`), `Rooms` (comma list, ranges allowed, e.g. `4001-4026`). Saved as `Room 4012`.
 - **Scans** – every scan, append-only. Scans not on the list have `On List = No`.
 - **Staff** – names. When filled, the app shows a one-tap name picker at setup.
 
@@ -31,3 +32,7 @@ Saved on the phone, then removed from the address bar.
 
 ## Later
 - Login (Staff tab + PIN).
+
+## Remember the location (🔒)
+
+Tick **Keep this location for the next scans** when saving, or tap **🔒 Lock a location for all scans**. While locked, every scan saves straight to that location (the bar shows *Saving to …* with Change / Stop). Holding the camera on the same QR saves it once. **Wrong location?** fixes that one item without changing the lock. The lock is kept on the phone.

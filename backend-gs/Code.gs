@@ -17,12 +17,15 @@ const TOKEN = 'CHANGE_ME';
 
 const DEFAULTS = [
   ['Title', 'AHG Asset Scanner'],
-  ['Locations', 'On unit, Store, CN Backup store, NM store, With Biomed, In ASH, Other'],
+  ['Locations', 'Room, Main station (CN), Back up store, Equipment store, With Biomed, In ASH, Other'],
+  ['Room Area', 'Room'],
+  ['Rooms', '4001-4026'],
   ['Match Columns', 'Asset Number, Old Asset ID'],
   ['Card Columns', 'Product Category, Status, Comment, Handwritten Note'],
   ['Group Column', 'Product Category'],
   ['Code Pattern', 'BM[\\s_-]?\\d{4,6}|ICU[\\s_-]?\\d{1,4}'],
 ];
+const OLD_LOCATIONS = 'On unit, Store, CN Backup store, NM store, With Biomed, In ASH, Other';
 const LATEST_COLS = ['Found', 'Location', 'Scanned At', 'Scanned By'];
 const SCAN_HEADERS = ['Scanned At', 'Code', 'Raw QR Text', 'On List', 'Location', 'Scanned By', 'Asset Row'];
 
@@ -65,6 +68,14 @@ function ensure_() {
     st.getRange(1, 1, 1, 2).setValues([['Key', 'Value']]).setFontWeight('bold');
     st.getRange(2, 1, DEFAULTS.length, 2).setValues(DEFAULTS);
     st.autoResizeColumns(1, 2);
+  } else {
+    // Add any new setting rows; move an untouched old Locations default to the new one
+    const have = st.getDataRange().getDisplayValues();
+    const keys = have.map(r => String(r[0]).trim());
+    const li = keys.indexOf('Locations');
+    if (li > 0 && String(have[li][1]).trim() === OLD_LOCATIONS) st.getRange(li + 1, 2).setValue(DEFAULTS[1][1]);
+    const add = DEFAULTS.filter(([k]) => keys.indexOf(k) < 0);
+    if (add.length) st.getRange(st.getLastRow() + 1, 1, add.length, 2).setValues(add);
   }
 
   let sc = ss.getSheetByName(SCANS_SHEET);

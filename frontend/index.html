@@ -108,7 +108,7 @@ const LSset = (k,v) => { try { localStorage.setItem('ahgScan_'+k, v); } catch(e)
 let cfg = { api: LS('api'), token: LS('token'), name: LS('name') };
 let settings = {}, rows = [], staff = [];
 let filter = 'todo', group = 'All', current = null, chosenLoc = '';
-let stream = null, detector = null, scanning = false, lastCode = '', lastAt = 0, torchOn = false;
+let stream = null, detector = null, scanning = false, paused = false, lastCode = '', lastAt = 0, torchOn = false;
 
 // Setup link: index.html#api=...&t=...&n=...
 (function readHash(){
@@ -209,6 +209,7 @@ function lookup(text, raw){
   const key = norm(code), mc = list(settings['Match Columns']);
   const r = rows.find(x => mc.some(c => norm(x[c]) === key));
   current = { code, raw: raw || text, row: r || null };
+  paused = true;                                   // hold the camera on this result until Save/Cancel
   chosenLoc = (r && r['Location']) || '';
   const box = $('result'); box.classList.remove('hidden');
 
@@ -231,8 +232,13 @@ function lookup(text, raw){
   }
   box.scrollIntoView({behavior:'smooth', block:'center'});
 }
+const DEFAULT_LOCATIONS = 'On unit, Store, CN Backup store, NM store, With Biomed, In ASH, Other';
+function locations(){
+  const l = list(settings['Locations']);
+  return l.length ? l : list(DEFAULT_LOCATIONS);   // blank Settings cell → use defaults
+}
 function chipsHtml(){
-  return `<div class="chips">${list(settings['Locations']).map(l =>
+  return `<div class="chips">${locations().map(l =>
     `<button class="${l===chosenLoc?'sel':''}" data-l="${esc(l)}" onclick="pickLoc(this)">${esc(l)}</button>`).join('')}</div>`;
 }
 function pickLoc(btn){
@@ -242,7 +248,12 @@ function pickLoc(btn){
   btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('sel'));
   btn.classList.add('sel');
 }
-function closeResult(){ $('result').classList.add('hidden'); current = null; }
+function closeResult(){
+  $('result').classList.add('hidden'); current = null;
+  paused = false; lastCode = ''; lastAt = 0;       // ready for the next scan (same code allowed again)
+  document.querySelector('.cam').scrollIntoView({behavior:'smooth', block:'start'});
+  ensureCam();
+}
 
 async function save(){
   if (!current) return;
@@ -260,10 +271,12 @@ async function save(){
 }
 
 // ===== Camera =====
+let wantCam = false;
 async function startCam(){
+  wantCam = true;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal:'environment' }, width:{ideal:1280}, height:{ideal:960} }, audio:false });
-  } catch(e){ return toast('Camera blocked: ' + e.message); }
+  } catch(e){ wantCam = false; $('startCam').classList.remove('hidden'); return toast('Camera blocked: ' + e.message); }
   const v = $('video'); v.srcObject = stream; await v.play();
   $('startCam').classList.add('hidden');
   const track = stream.getVideoTracks()[0];
@@ -275,10 +288,10 @@ async function startCam(){
   if (!detector && !window.jsQR){
     try { await loadScript('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'); } catch(e){ toast('QR library failed to load'); }
   }
-  scanning = true; tick();
+  scanning = true; tick(++loopId);
 }
 function stopCam(){
-  scanning = false;
+  wantCam = false; scanning = false;
   if (stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
   $('startCam').classList.remove('hidden'); torchOn = false;
 }
@@ -287,14 +300,38 @@ async function toggleTorch(){
   torchOn = !torchOn;
   try { await stream.getVideoTracks()[0].applyConstraints({ advanced:[{ torch: torchOn }] }); } catch(e){}
 }
+function camAlive(){
+  const t = stream && stream.getVideoTracks()[0];
+  return !!(t && t.readyState === 'live');
+}
+let restarting = false;
+async function restartCam(){
+  if (restarting) return;
+  restarting = true;
+  try {
+    if (stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+    scanning = false;
+    await startCam();
+  } finally { restarting = false; }
+}
+// Called after Save/Cancel: if the camera died (screen off, app switch), bring it back
+function ensureCam(){
+  if (wantCam && !camAlive()) restartCam();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') ensureCam();
+});
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
 
 const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d', { willReadFrequently:true });
-async function tick(){
-  if (!scanning) return;
+let loopId = 0;                                    // only one scan loop alive at a time
+async function tick(id){
+  if (!scanning || id !== loopId) return;
   const v = $('video');
   try {
-    if (v.readyState >= 2){
+    if (!camAlive()){ if (!document.hidden) { restartCam(); return; } }
+    if (v.paused) { try { await v.play(); } catch(e){} }
+    if (!paused && v.readyState >= 2){
       let text = null;
       if (detector){
         const codes = await detector.detect(v);
@@ -316,7 +353,7 @@ async function tick(){
       }
     }
   } catch(e){}
-  setTimeout(tick, 200);
+  setTimeout(() => tick(id), 200);
 }
 
 // ===== Start =====

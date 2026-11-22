@@ -168,17 +168,26 @@ function saveCfg(){
 }
 
 // ===== Data =====
+// Show the last list instantly from the phone, then refresh from the sheet in the background
+function applyData(j){
+  settings = j.settings || {}; rows = j.rows || []; staff = j.staff || [];
+  // keep local saves that haven't reached the sheet yet
+  queue.forEach(q => { const r = rows.find(x => x._row === q.row); if (r){ r['Found']='Yes'; r['Location']=q.location; } });
+  $('title').textContent = S('Title'); document.title = $('title').textContent;
+}
 async function loadData(){
+  let cached = null; try { cached = JSON.parse(LS('data') || 'null'); } catch(e){}
+  if (cached && !rows.length){ applyData(cached); if (cfg.name){ renderGroups(); render(); } }
+  else if (!rows.length) $('progTxt').textContent = 'Loading…';
   try {
     const r = await fetch(cfg.api + '?token=' + encodeURIComponent(cfg.token));
     const j = await r.json();
     if (!j.ok) throw new Error(j.error);
-    settings = j.settings; rows = j.rows; staff = j.staff || [];
-    $('title').textContent = S('Title');
-    document.title = $('title').textContent;
+    LSset('data', JSON.stringify(j));
+    applyData(j);
     if (!cfg.name) return showSetup();           // name chosen once, then never asked again
     renderGroups(); render();
-  } catch(e){ toast('Load failed: ' + e.message); }
+  } catch(e){ toast(cached ? 'Offline — showing last list' : 'Load failed: ' + e.message); }
 }
 
 function renderGroups(){

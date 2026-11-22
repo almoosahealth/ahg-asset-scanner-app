@@ -47,7 +47,6 @@ function doPost(e) {
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    ensure_();
     return json_(save_(b));
   } catch (err) {
     return json_({ ok: false, error: String(err.message || err) });
@@ -119,32 +118,41 @@ function readStaff_() {
 // ---------- Save a scan ----------
 function save_(b) {
   const sh = assets_();
-  const settings = readSettings_();
-  const values = sh.getDataRange().getDisplayValues();
-  const headers = values[0];
+  const lastCol = sh.getLastColumn();
+  const headers = sh.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const col = name => headers.indexOf(name) + 1;
-  const matchCols = list_(settings['Match Columns']).map(col).filter(c => c > 0);
-
+  const matchCols = list_(readSettings_()['Match Columns']).map(col).filter(c => c > 0);
   const key = norm_(b.asset);
+  const hits = r => matchCols.some(c => norm_(r[c - 1]) === key);
+
   let row = -1;
   if (key) {
-    for (let i = 1; i < values.length && row < 0; i++) {
-      if (matchCols.some(c => norm_(values[i][c - 1]) === key)) row = i + 1;
+    // Fast path: the phone sends the row it matched — read just that row and confirm
+    const hint = Number(b.row);
+    if (hint > 1 && hint <= sh.getLastRow() && hits(sh.getRange(hint, 1, 1, lastCol).getDisplayValues()[0])) {
+      row = hint;
+    } else {
+      const values = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), lastCol).getDisplayValues();
+      for (let i = 0; i < values.length && row < 0; i++) if (hits(values[i])) row = i + 2;
     }
   }
 
   const now = new Date();
   if (row > 0) {
-    sh.getRange(row, col('Found')).setValue('Yes');
-    sh.getRange(row, col('Location')).setValue(b.location || '');
-    sh.getRange(row, col('Scanned At')).setValue(now);
-    sh.getRange(row, col('Scanned By')).setValue(b.by || '');
+    const cF = col('Found'), cL = col('Location'), cA = col('Scanned At'), cB = col('Scanned By');
+    if (cL === cF + 1 && cA === cF + 2 && cB === cF + 3) {
+      sh.getRange(row, cF, 1, 4).setValues([['Yes', b.location || '', now, b.by || '']]);   // one write
+    } else {
+      sh.getRange(row, cF).setValue('Yes');
+      sh.getRange(row, cL).setValue(b.location || '');
+      sh.getRange(row, cA).setValue(now);
+      sh.getRange(row, cB).setValue(b.by || '');
+    }
   }
 
   SpreadsheetApp.getActive().getSheetByName(SCANS_SHEET).appendRow([
     now, b.asset || '', b.raw || '', row > 0 ? 'Yes' : 'No', b.location || '', b.by || '', row > 0 ? row : ''
   ]);
-
   return { ok: true, row: row > 0 ? row : null, unlisted: row < 0 };
 }
 

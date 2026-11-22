@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#0b3d5c">
+<title>AHG Asset Scanner</title>
+<style>
+  :root{--brand:#0b3d5c;--ok:#1f8a4c;--warn:#c47f00;--bad:#b3261e;--bg:#f3f5f7;--card:#fff;--txt:#1b1f23;--muted:#6a737d}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+  header{background:var(--brand);color:#fff;padding:12px 16px;position:sticky;top:0;z-index:5}
+  header h1{font-size:17px;margin:0}
+  .prog{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:13px}
+  .bar{flex:1;height:8px;background:rgba(255,255,255,.25);border-radius:4px;overflow:hidden}
+  .bar>div{height:100%;background:#6fdc9a;width:0;transition:width .3s}
+  main{padding:12px;max-width:640px;margin:0 auto}
+  .cam{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:4/3}
+  video{width:100%;height:100%;object-fit:cover;display:block}
+  .frame{position:absolute;inset:18%;border:3px solid rgba(255,255,255,.85);border-radius:14px;pointer-events:none}
+  .camBtns{position:absolute;bottom:8px;right:8px;display:flex;gap:6px}
+  .camBtns button{background:rgba(0,0,0,.55);color:#fff;border:0;border-radius:20px;padding:8px 12px;font-size:14px}
+  .startCam{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  .startCam button{font-size:17px;padding:14px 22px;border-radius:10px;border:0;background:#fff;color:var(--brand);font-weight:600}
+  .card{background:var(--card);border-radius:12px;padding:14px;margin-top:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .big{font-size:22px;font-weight:700}
+  .muted{color:var(--muted);font-size:13px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;color:#fff}
+  .pill.ok{background:var(--ok)}.pill.miss{background:var(--bad)}.pill.warn{background:var(--warn)}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .chips button{border:1.5px solid var(--brand);background:#fff;color:var(--brand);border-radius:20px;padding:9px 14px;font-size:14px}
+  .chips button.sel{background:var(--brand);color:#fff}
+  .row{display:flex;gap:8px;margin-top:10px}
+  input{flex:1;padding:11px;border:1px solid #ccd;border-radius:8px;font-size:15px}
+  .btn{border:0;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:600;background:var(--brand);color:#fff}
+  .btn.ok{background:var(--ok)} .btn.ghost{background:#e6ebf0;color:var(--txt)}
+  .btn:disabled{opacity:.5}
+  .list .item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #eee;font-size:14px}
+  .list .item:last-child{border-bottom:0}
+  .tabs{display:flex;gap:6px;margin-top:6px}
+  .tabs button{flex:1;padding:8px;border:0;border-radius:8px;background:#e6ebf0;font-size:13px}
+  .tabs button.sel{background:var(--brand);color:#fff}
+  .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .25s;z-index:20}
+  .toast.show{opacity:1}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">AHG Asset Scanner</h1>
+  <div class="muted" style="color:#cfe3f0" id="who"></div>
+  <div class="prog"><div class="bar"><div id="barFill"></div></div><span id="progTxt">–</span></div>
+</header>
+
+<main>
+  <!-- Setup (once per phone) -->
+  <section id="setup" class="card hidden">
+    <div class="big">Setup</div>
+    <p class="muted">Done once on this phone. Opening the setup link fills the first two for you.</p>
+    <div class="row"><input id="cfgApi" placeholder="Apps Script /exec URL"></div>
+    <div class="row"><input id="cfgToken" placeholder="Token"></div>
+    <div class="row" id="nameRow"><input id="cfgName" placeholder="Your name"></div>
+    <div class="row"><button class="btn" onclick="saveCfg()">Save</button></div>
+  </section>
+
+  <!-- Scanner -->
+  <section id="scanner" class="hidden">
+    <div class="cam">
+      <video id="video" playsinline muted></video>
+      <div class="frame"></div>
+      <div class="camBtns">
+        <button id="torchBtn" class="hidden" onclick="toggleTorch()">🔦</button>
+        <button onclick="stopCam()">⏹</button>
+      </div>
+      <div class="startCam" id="startCam"><button onclick="startCam()">📷 Start scanning</button></div>
+    </div>
+
+    <div class="row">
+      <input id="manual" placeholder="Type an asset number" autocapitalize="characters">
+      <button class="btn ghost" onclick="lookup(document.getElementById('manual').value, '')">Find</button>
+    </div>
+
+    <div id="result" class="card hidden"></div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <b>List</b>
+        <button class="btn ghost" style="padding:6px 10px;font-size:13px" onclick="loadData()">↻ Refresh</button>
+      </div>
+      <div class="chips" id="groups"></div>
+      <div class="tabs">
+        <button data-f="todo" class="sel" onclick="setFilter('todo')">Not found</button>
+        <button data-f="done" onclick="setFilter('done')">Found</button>
+        <button data-f="all" onclick="setFilter('all')">All</button>
+      </div>
+      <div id="list" class="list"></div>
+    </div>
+    <p class="muted" style="text-align:center"><a href="#" onclick="showSetup();return false">Settings</a></p>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== Storage =====
+const LS = k => { try { return localStorage.getItem('ahgScan_'+k) || ''; } catch(e){ return ''; } };
+const LSset = (k,v) => { try { localStorage.setItem('ahgScan_'+k, v); } catch(e){} };
+
+let cfg = { api: LS('api'), token: LS('token'), name: LS('name') };
+let settings = {}, rows = [], staff = [];
+let filter = 'todo', group = 'All', current = null, chosenLoc = '';
+let stream = null, detector = null, scanning = false, lastCode = '', lastAt = 0, torchOn = false;
+
+// Setup link: index.html#api=...&t=...&n=...
+(function readHash(){
+  if (!location.hash) return;
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get('api')) { cfg.api = h.get('api'); LSset('api', cfg.api); }
+  if (h.get('t'))   { cfg.token = h.get('t'); LSset('token', cfg.token); }
+  if (h.get('n'))   { cfg.name = h.get('n'); LSset('name', cfg.name); }
+  history.replaceState(null, '', location.pathname);
+})();
+
+// ===== Utils =====
+function $(id){ return document.getElementById(id); }
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),2200); }
+function norm(s){ return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
+function esc(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function list(s){ return String(s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+function isFound(r){ return String(r['Found']).toLowerCase() === 'yes'; }
+function idOf(r){ return r[list(settings['Match Columns'])[0]] || ''; }
+
+// Pull the asset code out of any QR text (plain code, URL, JSON…) using Settings → Code Pattern
+function extractCode(text){
+  const t = String(text||'').trim();
+  try {
+    const m = t.match(new RegExp(settings['Code Pattern'] || '.+', 'i'));
+    if (m) return m[0].toUpperCase();
+  } catch(e){}
+  return t;
+}
+
+// ===== Setup =====
+function showSetup(){
+  stopCam();
+  $('cfgApi').value = cfg.api; $('cfgToken').value = cfg.token;
+  $('nameRow').innerHTML = staff.length
+    ? `<select id="cfgName" style="flex:1;padding:11px;border-radius:8px;font-size:15px">
+         <option value="">Choose your name</option>${staff.map(n=>`<option ${n===cfg.name?'selected':''}>${esc(n)}</option>`).join('')}</select>`
+    : `<input id="cfgName" placeholder="Your name" value="${esc(cfg.name)}">`;
+  $('setup').classList.remove('hidden'); $('scanner').classList.add('hidden');
+}
+function saveCfg(){
+  cfg.api = $('cfgApi').value.trim(); cfg.token = $('cfgToken').value.trim(); cfg.name = $('cfgName').value.trim();
+  if (!cfg.api || !cfg.token) return toast('URL and token needed');
+  LSset('api',cfg.api); LSset('token',cfg.token); LSset('name',cfg.name);
+  init();
+}
+
+// ===== Data =====
+async function loadData(){
+  try {
+    const r = await fetch(cfg.api + '?token=' + encodeURIComponent(cfg.token));
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error);
+    settings = j.settings; rows = j.rows; staff = j.staff || [];
+    $('title').textContent = settings['Title'] || 'AHG Asset Scanner';
+    document.title = $('title').textContent;
+    if (!cfg.name) return showSetup();           // name chosen once, then never asked again
+    renderGroups(); render();
+  } catch(e){ toast('Load failed: ' + e.message); }
+}
+
+function renderGroups(){
+  const gc = settings['Group Column'];
+  const vals = gc ? [...new Set(rows.map(r => r[gc]).filter(Boolean))].sort() : [];
+  if (group !== 'All' && !vals.includes(group)) group = 'All';
+  $('groups').innerHTML = vals.length < 2 ? '' : ['All', ...vals].map(v =>
+    `<button class="${v===group?'sel':''}" data-g="${esc(v)}" onclick="setGroup(this.dataset.g)">${esc(v)}</button>`).join('');
+}
+function setGroup(g){ group = g; renderGroups(); render(); }
+function setFilter(f){
+  filter = f;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('sel', b.dataset.f===f));
+  render();
+}
+
+function render(){
+  $('who').textContent = 'Scanning as ' + cfg.name;
+  const gc = settings['Group Column'];
+  const inGroup = rows.filter(r => group==='All' || r[gc]===group);
+  const done = inGroup.filter(isFound).length;
+  $('progTxt').textContent = done + ' / ' + inGroup.length + ' found';
+  $('barFill').style.width = inGroup.length ? (done/inGroup.length*100)+'%' : '0';
+
+  const mc = list(settings['Match Columns']);
+  const shown = inGroup.filter(r => filter==='all' ? true : filter==='done' ? isFound(r) : !isFound(r));
+  $('list').innerHTML = shown.map(r => `
+    <div class="item" data-id="${esc(idOf(r))}" onclick="lookup(this.dataset.id,'')">
+      <div><b>${esc(r[mc[0]])}</b> <span class="muted">${esc(mc.slice(1).map(c=>r[c]).filter(Boolean).join(' · '))}</span><br>
+      <span class="muted">${esc(r[gc]||'')}${r['Location'] ? ' · ' + esc(r['Location']) : ''}</span></div>
+      <span class="pill ${isFound(r)?'ok':'miss'}">${isFound(r)?'Found':'Not found'}</span>
+    </div>`).join('') || '<p class="muted">Nothing here.</p>';
+}
+
+// ===== Lookup + save =====
+function lookup(text, raw){
+  const code = extractCode(text);
+  if (!code) return;
+  const key = norm(code), mc = list(settings['Match Columns']);
+  const r = rows.find(x => mc.some(c => norm(x[c]) === key));
+  current = { code, raw: raw || text, row: r || null };
+  chosenLoc = (r && r['Location']) || '';
+  const box = $('result'); box.classList.remove('hidden');
+
+  if (!r){
+    box.innerHTML = `<span class="pill warn">Not on the list</span>
+      <div class="big" style="margin-top:6px">${esc(code)}</div>
+      <div class="muted">QR text: ${esc(current.raw.slice(0,120))}</div>
+      <div class="muted" style="margin-top:8px">Where is it?</div>${chipsHtml()}
+      <div class="row"><button class="btn" onclick="save()">Log scan</button>
+      <button class="btn ghost" onclick="closeResult()">Cancel</button></div>`;
+  } else {
+    const details = list(settings['Card Columns']).filter(c => r[c])
+      .map(c => `<div class="muted"><b>${esc(c)}:</b> ${esc(r[c])}</div>`).join('');
+    box.innerHTML = `<span class="pill ${isFound(r)?'ok':'miss'}">${isFound(r)?'Already found':'Not found yet'}</span>
+      <div class="big" style="margin-top:6px">${esc(r[mc[0]])} <span class="muted">${esc(mc.slice(1).map(c=>r[c]).filter(Boolean).join(' · '))}</span></div>
+      ${details}
+      <div class="muted" style="margin-top:8px">Where is it?</div>${chipsHtml()}
+      <div class="row"><button class="btn ok" onclick="save()">✔ Mark found</button>
+      <button class="btn ghost" onclick="closeResult()">Cancel</button></div>`;
+  }
+  box.scrollIntoView({behavior:'smooth', block:'center'});
+}
+function chipsHtml(){
+  return `<div class="chips">${list(settings['Locations']).map(l =>
+    `<button class="${l===chosenLoc?'sel':''}" data-l="${esc(l)}" onclick="pickLoc(this)">${esc(l)}</button>`).join('')}</div>`;
+}
+function pickLoc(btn){
+  let loc = btn.dataset.l;
+  if (loc === 'Other'){ const v = prompt('Location?'); if (!v) return; loc = v; }
+  chosenLoc = loc;
+  btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('sel'));
+  btn.classList.add('sel');
+}
+function closeResult(){ $('result').classList.add('hidden'); current = null; }
+
+async function save(){
+  if (!current) return;
+  if (!chosenLoc) return toast('Pick a location');
+  const payload = { token: cfg.token, asset: current.row ? idOf(current.row) : current.code,
+                    raw: current.raw, location: chosenLoc, by: cfg.name };
+  try {
+    const r = await fetch(cfg.api, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(payload) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error);
+    toast(j.unlisted ? 'Logged — not on the list' : '✔ Saved');
+    if (current.row){ current.row['Found']='Yes'; current.row['Location']=chosenLoc; }
+    closeResult(); render();
+  } catch(e){ toast('Save failed: ' + e.message); }
+}
+
+// ===== Camera =====
+async function startCam(){
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal:'environment' }, width:{ideal:1280}, height:{ideal:960} }, audio:false });
+  } catch(e){ return toast('Camera blocked: ' + e.message); }
+  const v = $('video'); v.srcObject = stream; await v.play();
+  $('startCam').classList.add('hidden');
+  const track = stream.getVideoTracks()[0];
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  $('torchBtn').classList.toggle('hidden', !caps.torch);
+  if (!detector && 'BarcodeDetector' in window){
+    try { detector = new BarcodeDetector({ formats:['qr_code'] }); } catch(e){ detector = null; }
+  }
+  if (!detector && !window.jsQR){
+    try { await loadScript('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'); } catch(e){ toast('QR library failed to load'); }
+  }
+  scanning = true; tick();
+}
+function stopCam(){
+  scanning = false;
+  if (stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+  $('startCam').classList.remove('hidden'); torchOn = false;
+}
+async function toggleTorch(){
+  if (!stream) return;
+  torchOn = !torchOn;
+  try { await stream.getVideoTracks()[0].applyConstraints({ advanced:[{ torch: torchOn }] }); } catch(e){}
+}
+function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
+
+const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d', { willReadFrequently:true });
+async function tick(){
+  if (!scanning) return;
+  const v = $('video');
+  try {
+    if (v.readyState >= 2){
+      let text = null;
+      if (detector){
+        const codes = await detector.detect(v);
+        if (codes.length) text = codes[0].rawValue;
+      } else if (window.jsQR){
+        canvas.width = v.videoWidth; canvas.height = v.videoHeight;
+        ctx.drawImage(v, 0, 0);
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const c = jsQR(img.data, img.width, img.height, { inversionAttempts:'dontInvert' });
+        if (c) text = c.data;
+      }
+      if (text){
+        const now = Date.now();
+        if (text !== lastCode || now - lastAt > 4000){
+          lastCode = text; lastAt = now;
+          if (navigator.vibrate) navigator.vibrate(80);
+          lookup(text, text);
+        }
+      }
+    }
+  } catch(e){}
+  setTimeout(tick, 200);
+}
+
+// ===== Start =====
+function init(){
+  if (!cfg.api || !cfg.token) return showSetup();
+  $('setup').classList.add('hidden'); $('scanner').classList.remove('hidden');
+  loadData();
+}
+init();
+</script>
+</body>
+</html>

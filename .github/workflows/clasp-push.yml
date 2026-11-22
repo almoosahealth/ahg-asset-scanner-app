@@ -1,0 +1,65 @@
+name: Push to Apps Script
+
+# Copies backend-gs/ into the Apps Script project bound to the asset sheet,
+# then moves the existing web app deployment to the new version (same /exec URL).
+# Runs on every push to main that changes backend-gs/, or by hand from the Actions tab.
+# Repo secrets:
+#   CLASPRC_JSON  = contents of ~/.clasprc.json after `clasp login` (Google account that owns the sheet)
+#   SCANNER_TOKEN = the scanner token (kept out of the public repo; replaces CHANGE_ME at push time)
+
+on:
+  push:
+    branches: [main]
+    paths: ['backend-gs/**']
+  workflow_dispatch:
+
+concurrency:
+  group: clasp-push
+  cancel-in-progress: false
+
+env:
+  DEPLOYMENT_ID: AKfycbxeaVjzUFh4p8yEAKaxGW5XmE81LV3uYs572K3tyXxJ5kacLPbQJUJbqZr4y93O4v8_
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install clasp
+        run: npm install -g @google/clasp
+
+      - name: Write clasp login
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ]; then echo "Secret CLASPRC_JSON is missing"; exit 1; fi
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+
+      - name: Put the token in
+        working-directory: backend-gs
+        env:
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
+        run: |
+          if [ -z "$SCANNER_TOKEN" ]; then echo "Secret SCANNER_TOKEN is missing"; exit 1; fi
+          sed -i "s/const TOKEN = 'CHANGE_ME';/const TOKEN = '${SCANNER_TOKEN}';/" Code.gs
+          grep -q "CHANGE_ME" Code.gs && { echo "Token not replaced"; exit 1; } || true
+
+      - name: Stamp build (so deletions are always pushed)
+        working-directory: backend-gs
+        run: echo "const BUILD_STAMP = '${GITHUB_SHA::7} $(date -u +%Y-%m-%dT%H:%MZ)';" > _build.js
+
+      - name: Push to Apps Script
+        working-directory: backend-gs
+        run: clasp push --force
+
+      - name: Update the web app deployment (same URL)
+        working-directory: backend-gs
+        run: |
+          DESC="${GITHUB_SHA::7}"
+          clasp update-deployment "$DEPLOYMENT_ID" --description "$DESC" \
+            || clasp deploy --deploymentId "$DEPLOYMENT_ID" --description "$DESC"

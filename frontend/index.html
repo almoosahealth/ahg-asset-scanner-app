@@ -120,6 +120,17 @@ let stream = null, detector = null, scanning = false, paused = false, lastCode =
   history.replaceState(null, '', location.pathname);
 })();
 
+// ===== Settings (blank cell in the Settings tab → default) =====
+const DEFAULTS = {
+  'Title': 'AHG Asset Scanner',
+  'Locations': 'On unit, Store, CN Backup store, NM store, With Biomed, In ASH, Other',
+  'Match Columns': 'Asset Number, Old Asset ID',
+  'Card Columns': 'Product Category, Status, Comment, Handwritten Note',
+  'Group Column': 'Product Category',
+  'Code Pattern': 'BM[\\s_-]?\\d{4,6}|ICU[\\s_-]?\\d{1,4}'
+};
+function S(k){ const v = String((settings && settings[k]) || '').trim(); return v || DEFAULTS[k] || ''; }
+
 // ===== Utils =====
 function $(id){ return document.getElementById(id); }
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),2200); }
@@ -127,13 +138,13 @@ function norm(s){ return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
 function esc(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function list(s){ return String(s||'').split(',').map(x=>x.trim()).filter(Boolean); }
 function isFound(r){ return String(r['Found']).toLowerCase() === 'yes'; }
-function idOf(r){ return r[list(settings['Match Columns'])[0]] || ''; }
+function idOf(r){ return r[list(S('Match Columns'))[0]] || ''; }
 
 // Pull the asset code out of any QR text (plain code, URL, JSON…) using Settings → Code Pattern
 function extractCode(text){
   const t = String(text||'').trim();
   try {
-    const m = t.match(new RegExp(settings['Code Pattern'] || '.+', 'i'));
+    const m = t.match(new RegExp(S('Code Pattern'), 'i'));
     if (m) return m[0].toUpperCase();
   } catch(e){}
   return t;
@@ -163,7 +174,7 @@ async function loadData(){
     const j = await r.json();
     if (!j.ok) throw new Error(j.error);
     settings = j.settings; rows = j.rows; staff = j.staff || [];
-    $('title').textContent = settings['Title'] || 'AHG Asset Scanner';
+    $('title').textContent = S('Title');
     document.title = $('title').textContent;
     if (!cfg.name) return showSetup();           // name chosen once, then never asked again
     renderGroups(); render();
@@ -171,7 +182,7 @@ async function loadData(){
 }
 
 function renderGroups(){
-  const gc = settings['Group Column'];
+  const gc = S('Group Column');
   const vals = gc ? [...new Set(rows.map(r => r[gc]).filter(Boolean))].sort() : [];
   if (group !== 'All' && !vals.includes(group)) group = 'All';
   $('groups').innerHTML = vals.length < 2 ? '' : ['All', ...vals].map(v =>
@@ -186,13 +197,13 @@ function setFilter(f){
 
 function render(){
   $('who').textContent = 'Scanning as ' + cfg.name;
-  const gc = settings['Group Column'];
+  const gc = S('Group Column');
   const inGroup = rows.filter(r => group==='All' || r[gc]===group);
   const done = inGroup.filter(isFound).length;
   $('progTxt').textContent = done + ' / ' + inGroup.length + ' found';
   $('barFill').style.width = inGroup.length ? (done/inGroup.length*100)+'%' : '0';
 
-  const mc = list(settings['Match Columns']);
+  const mc = list(S('Match Columns'));
   const shown = inGroup.filter(r => filter==='all' ? true : filter==='done' ? isFound(r) : !isFound(r));
   $('list').innerHTML = shown.map(r => `
     <div class="item" data-id="${esc(idOf(r))}" onclick="lookup(this.dataset.id,'')">
@@ -206,7 +217,7 @@ function render(){
 function lookup(text, raw){
   const code = extractCode(text);
   if (!code) return;
-  const key = norm(code), mc = list(settings['Match Columns']);
+  const key = norm(code), mc = list(S('Match Columns'));
   const r = rows.find(x => mc.some(c => norm(x[c]) === key));
   current = { code, raw: raw || text, row: r || null };
   paused = true;                                   // hold the camera on this result until Save/Cancel
@@ -221,7 +232,7 @@ function lookup(text, raw){
       <div class="row"><button class="btn" onclick="save()">Log scan</button>
       <button class="btn ghost" onclick="closeResult()">Cancel</button></div>`;
   } else {
-    const details = list(settings['Card Columns']).filter(c => r[c])
+    const details = list(S('Card Columns')).filter(c => r[c])
       .map(c => `<div class="muted"><b>${esc(c)}:</b> ${esc(r[c])}</div>`).join('');
     box.innerHTML = `<span class="pill ${isFound(r)?'ok':'miss'}">${isFound(r)?'Already found':'Not found yet'}</span>
       <div class="big" style="margin-top:6px">${esc(r[mc[0]])} <span class="muted">${esc(mc.slice(1).map(c=>r[c]).filter(Boolean).join(' · '))}</span></div>
@@ -234,7 +245,7 @@ function lookup(text, raw){
 }
 const DEFAULT_LOCATIONS = 'On unit, Store, CN Backup store, NM store, With Biomed, In ASH, Other';
 function locations(){
-  const l = list(settings['Locations']);
+  const l = list(S('Locations'));
   return l.length ? l : list(DEFAULT_LOCATIONS);   // blank Settings cell → use defaults
 }
 function chipsHtml(){

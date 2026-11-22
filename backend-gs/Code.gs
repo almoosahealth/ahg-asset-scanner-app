@@ -93,7 +93,9 @@ function readSettings_() {
   const out = {};
   DEFAULTS.forEach(([k, v]) => (out[k] = v));
   const st = SpreadsheetApp.getActive().getSheetByName(SETTINGS_SHEET);
-  st.getDataRange().getDisplayValues().slice(1).forEach(([k, v]) => { if (k) out[String(k).trim()] = String(v); });
+  st.getDataRange().getDisplayValues().slice(1).forEach(([k, v]) => {
+    if (k && String(v).trim()) out[String(k).trim()] = String(v).trim();   // blank value → keep default
+  });
   return out;
 }
 
